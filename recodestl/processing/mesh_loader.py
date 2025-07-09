@@ -249,11 +249,12 @@ class MeshLoader:
         if len(mesh.faces) == 0:
             errors.append("Mesh has no faces")
             
-        # Check for degenerate triangles
-        areas = mesh.area_faces
-        degenerate_count = np.sum(areas < 1e-10)
-        if degenerate_count > 0:
-            errors.append(f"Mesh has {degenerate_count} degenerate triangles")
+        # Check for degenerate triangles (only if we have faces)
+        if len(mesh.faces) > 0:
+            areas = mesh.area_faces
+            degenerate_count = np.sum(areas < 1e-10)
+            if degenerate_count > 0:
+                errors.append(f"Mesh has {degenerate_count} degenerate triangles")
             
         # Check bounds
         if mesh.bounds is not None:
