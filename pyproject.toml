@@ -7,9 +7,7 @@ requires-python = ">=3.11"
 dependencies = [
     "torch>=2.5.0",
     "transformers>=4.47.0",
-    "cadquery>=2.4.0",
     "trimesh>=4.0.0",
-    "open3d>=0.18.0",
     "typer>=0.9.0",
     "pydantic>=2.5.0",
     "numpy>=1.24.0",
@@ -20,6 +18,9 @@ dependencies = [
     "tomli>=2.0.1",
     "tomli-w>=1.0.0",
     "rich>=13.7.0",
+    "diskcache>=5.6.0",
+    "joblib>=1.3.0",
+    "matplotlib>=3.7.0",
 ]
 
 [project.optional-dependencies]
@@ -30,6 +31,8 @@ dev = [
     "pytest>=8.0.0",
     "pytest-cov>=4.1.0",
     "pytest-asyncio>=0.23.0",
+    "pytest-mock>=3.12.0",
+    "hypothesis>=6.0.0",
 ]
 
 [project.scripts]

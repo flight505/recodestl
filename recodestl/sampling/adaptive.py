@@ -1,6 +1,6 @@
 """Adaptive point cloud sampling based on geometric features."""
 
-from typing import Optional, Tuple
+from typing import Optional, Tuple, Dict, Any
 
 import numpy as np
 import trimesh
@@ -11,6 +11,7 @@ from recodestl.sampling.base import (
     farthest_point_sampling,
     sample_surface_points,
 )
+from recodestl.utils import CacheManager
 
 
 class AdaptiveSampler(SamplingStrategy):
@@ -25,6 +26,7 @@ class AdaptiveSampler(SamplingStrategy):
         normal_weight: float = 0.1,
         feature_radius: float = 0.1,
         edge_angle_threshold: float = 30.0,
+        cache_manager: Optional[CacheManager] = None,
     ):
         """Initialize adaptive sampler.
 
@@ -36,8 +38,9 @@ class AdaptiveSampler(SamplingStrategy):
             normal_weight: Weight for normal variation regions (0-1)
             feature_radius: Radius for feature detection
             edge_angle_threshold: Angle threshold for edge detection (degrees)
+            cache_manager: Optional cache manager for caching sampled points
         """
-        super().__init__(num_points, seed)
+        super().__init__(num_points, seed, cache_manager)
         self.curvature_weight = curvature_weight
         self.edge_weight = edge_weight
         self.normal_weight = normal_weight
@@ -50,8 +53,18 @@ class AdaptiveSampler(SamplingStrategy):
             self.curvature_weight /= total_weight
             self.edge_weight /= total_weight
             self.normal_weight /= total_weight
+    
+    def _get_cache_params(self) -> Dict[str, Any]:
+        """Get cache parameters for this strategy."""
+        return {
+            "curvature_weight": self.curvature_weight,
+            "edge_weight": self.edge_weight,
+            "normal_weight": self.normal_weight,
+            "feature_radius": self.feature_radius,
+            "edge_angle_threshold": self.edge_angle_threshold,
+        }
 
-    def sample(self, mesh: trimesh.Trimesh) -> np.ndarray:
+    def _sample_impl(self, mesh: trimesh.Trimesh) -> np.ndarray:
         """Sample points adaptively based on geometric features.
 
         Args:

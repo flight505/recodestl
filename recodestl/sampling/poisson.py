@@ -1,6 +1,6 @@
 """Poisson disk sampling strategy for point clouds."""
 
-from typing import Optional
+from typing import Optional, Dict, Any
 
 import numpy as np
 import trimesh
@@ -11,6 +11,7 @@ from recodestl.sampling.base import (
     farthest_point_sampling,
     sample_surface_points,
 )
+from recodestl.utils import CacheManager
 
 
 class PoissonDiskSampler(SamplingStrategy):
@@ -22,6 +23,7 @@ class PoissonDiskSampler(SamplingStrategy):
         seed: Optional[int] = None,
         k_candidates: int = 30,
         use_face_areas: bool = True,
+        cache_manager: Optional[CacheManager] = None,
     ):
         """Initialize Poisson disk sampler.
 
@@ -30,12 +32,20 @@ class PoissonDiskSampler(SamplingStrategy):
             seed: Random seed for reproducibility
             k_candidates: Number of candidates to try for each point
             use_face_areas: Whether to weight by face areas
+            cache_manager: Optional cache manager for caching sampled points
         """
-        super().__init__(num_points, seed)
+        super().__init__(num_points, seed, cache_manager)
         self.k_candidates = k_candidates
         self.use_face_areas = use_face_areas
+    
+    def _get_cache_params(self) -> Dict[str, Any]:
+        """Get cache parameters for this strategy."""
+        return {
+            "k_candidates": self.k_candidates,
+            "use_face_areas": self.use_face_areas,
+        }
 
-    def sample(self, mesh: trimesh.Trimesh) -> np.ndarray:
+    def _sample_impl(self, mesh: trimesh.Trimesh) -> np.ndarray:
         """Sample points using Poisson disk sampling.
 
         Args:
@@ -144,6 +154,7 @@ class BlueNoiseSampler(SamplingStrategy):
         seed: Optional[int] = None,
         iterations: int = 10,
         initial_samples: int = 10000,
+        cache_manager: Optional[CacheManager] = None,
     ):
         """Initialize blue noise sampler.
 
@@ -152,12 +163,20 @@ class BlueNoiseSampler(SamplingStrategy):
             seed: Random seed for reproducibility
             iterations: Number of Lloyd relaxation iterations
             initial_samples: Initial number of samples before filtering
+            cache_manager: Optional cache manager for caching sampled points
         """
-        super().__init__(num_points, seed)
+        super().__init__(num_points, seed, cache_manager)
         self.iterations = iterations
         self.initial_samples = max(initial_samples, num_points * 20)
+    
+    def _get_cache_params(self) -> Dict[str, Any]:
+        """Get cache parameters for this strategy."""
+        return {
+            "iterations": self.iterations,
+            "initial_samples": self.initial_samples,
+        }
 
-    def sample(self, mesh: trimesh.Trimesh) -> np.ndarray:
+    def _sample_impl(self, mesh: trimesh.Trimesh) -> np.ndarray:
         """Sample points using blue noise distribution.
 
         Args:

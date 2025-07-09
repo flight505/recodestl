@@ -1,32 +1,71 @@
 """Base classes and utilities for point cloud sampling."""
 
 from abc import ABC, abstractmethod
-from typing import Optional, Tuple
+from typing import Optional, Tuple, Dict, Any
 
 import numpy as np
 import torch
 import trimesh
 
+from recodestl.utils import CacheManager
+
 
 class SamplingStrategy(ABC):
     """Abstract base class for point cloud sampling strategies."""
 
-    def __init__(self, num_points: int = 256, seed: Optional[int] = None):
+    def __init__(self, num_points: int = 256, seed: Optional[int] = None, cache_manager: Optional[CacheManager] = None):
         """Initialize sampling strategy.
 
         Args:
             num_points: Number of points to sample
             seed: Random seed for reproducibility
+            cache_manager: Optional cache manager for caching sampled points
         """
         self.num_points = num_points
         self.seed = seed
+        self.cache_manager = cache_manager
         
         if seed is not None:
             np.random.seed(seed)
 
-    @abstractmethod
     def sample(self, mesh: trimesh.Trimesh) -> np.ndarray:
-        """Sample points from mesh.
+        """Sample points from mesh with caching support.
+
+        Args:
+            mesh: Input mesh
+
+        Returns:
+            Array of sampled points (num_points, 3)
+        """
+        # Check cache if available
+        if self.cache_manager:
+            # Create cache key from mesh hash and sampling parameters
+            params = self._get_cache_params()
+            cache_key = self._generate_cache_key(mesh, params)
+            
+            # Try to get from cache
+            cached_points, metadata = self.cache_manager.get_point_cloud(cache_key)
+            if cached_points is not None:
+                return cached_points
+        
+        # Sample points using the implementation
+        points = self._sample_impl(mesh)
+        
+        # Cache the result
+        if self.cache_manager and cache_key:
+            metadata = {
+                "strategy": self.__class__.__name__,
+                "num_points": self.num_points,
+                "seed": self.seed,
+                **params
+            }
+            self.cache_manager.cache_point_cloud(cache_key, points, metadata)
+        
+        return points
+    
+    @abstractmethod
+    def _sample_impl(self, mesh: trimesh.Trimesh) -> np.ndarray:
+        """Implementation of the sampling strategy.
 
         Args:
             mesh: Input mesh
@@ -35,6 +74,46 @@ class SamplingStrategy(ABC):
             Array of sampled points (num_points, 3)
         """
         pass
+    
+    def _get_cache_params(self) -> Dict[str, Any]:
+        """Get parameters for cache key generation.
+        
+        Subclasses can override to add strategy-specific parameters.
+        
+        Returns:
+            Dictionary of cache parameters
+        """
+        return {}
+    
+    def _generate_cache_key(self, mesh: trimesh.Trimesh, params: Dict[str, Any]) -> str:
+        """Generate cache key for this sampling operation.
+        
+        Args:
+            mesh: Input mesh
+            params: Additional parameters
+            
+        Returns:
+            Cache key string
+        """
+        # Use mesh hash and parameters
+        mesh_hash = mesh.identifier_hash
+        strategy_name = self.__class__.__name__
+        
+        cache_params = {
+            "mesh_hash": mesh_hash,
+            "strategy": strategy_name,
+            "num_points": self.num_points,
+            "seed": self.seed,
+            **params
+        }
+        
+        # Create deterministic key
+        import hashlib
+        import json
+        param_str = json.dumps(cache_params, sort_keys=True)
+        key_hash = hashlib.md5(param_str.encode()).hexdigest()[:16]
+        
+        return f"pc_{strategy_name}_{key_hash}"
 
     def _validate_mesh(self, mesh: trimesh.Trimesh) -> None:
         """Validate mesh before sampling.

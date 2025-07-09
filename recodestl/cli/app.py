@@ -10,6 +10,7 @@ from rich.table import Table
 from recodestl.core import Config
 from recodestl.processing import load_stl, validate_stl, preprocess_mesh
 from recodestl.sampling import SamplingFactory
+from recodestl.utils import create_cache_manager
 
 app = typer.Typer(
     name="recodestl",
@@ -42,9 +43,12 @@ def analyze(
     console.print(f"\n🔍 Analyzing [cyan]{stl_file.name}[/cyan]...")
     
     try:
+        # Create cache manager if needed
+        cache_mgr = create_cache_manager() if Config().cache.enabled else None
+        
         # Load mesh
         with console.status("Loading STL file..."):
-            mesh = load_stl(stl_file, validate=False, show_progress=True)
+            mesh = load_stl(stl_file, validate=False, show_progress=True, cache_manager=cache_mgr)
             
         # Basic info
         table = Table(title="Mesh Information", show_header=False)
@@ -171,16 +175,19 @@ def sample(
     console.print(f"\n🎯 Sampling points from [cyan]{stl_file.name}[/cyan]...")
     
     try:
+        # Create cache manager if needed
+        cache_mgr = create_cache_manager() if Config().cache.enabled else None
+        
         # Load mesh
         with console.status("Loading STL file..."):
-            mesh = load_stl(stl_file, show_progress=True)
+            mesh = load_stl(stl_file, show_progress=True, cache_manager=cache_mgr)
             
         # Preprocess mesh
         with console.status("Preprocessing mesh..."):
             mesh, transform_info = preprocess_mesh(mesh)
             
         # Create sampler
-        sampler = SamplingFactory.create(method, num_points=num_points)
+        sampler = SamplingFactory.create(method, num_points=num_points, cache_manager=cache_mgr)
         
         # Sample points
         with console.status(f"Sampling {num_points} points using {method} method..."):
@@ -235,6 +242,70 @@ def info() -> None:
         console.print("\n✅ CUDA available")
     else:
         console.print("\n⚠️  No GPU acceleration available (using CPU)")
+
+
+@app.command()
+def cache(
+    action: str = typer.Argument(
+        ...,
+        help="Cache action: stats, clear, or evict"
+    ),
+    config: Optional[Path] = typer.Option(
+        None,
+        "--config",
+        "-c",
+        help="Configuration file"
+    ),
+) -> None:
+    """Manage the cache system."""
+    # Load configuration
+    if config:
+        cfg = Config.from_toml(config)
+    else:
+        cfg = Config()
+        
+    # Create cache manager
+    cache_mgr = create_cache_manager(cfg.cache)
+    
+    if action == "stats":
+        # Show cache statistics
+        stats = cache_mgr.get_stats()
+        
+        if not stats.get("enabled", False):
+            console.print("[yellow]Cache is disabled[/yellow]")
+            return
+            
+        table = Table(title="Cache Statistics", show_header=False)
+        table.add_column("Property", style="cyan")
+        table.add_column("Value", style="white")
+        
+        table.add_row("Location", stats.get("location", "N/A"))
+        table.add_row("Size Limit", f"{stats.get('size_limit_gb', 0):.1f} GB")
+        table.add_row("Entries", f"{stats.get('entries', 0):,}")
+        table.add_row("Size", f"{stats.get('size_mb', 0):.1f} MB")
+        table.add_row("Hits", f"{stats.get('hits', 0):,}")
+        table.add_row("Misses", f"{stats.get('misses', 0):,}")
+        table.add_row("Hit Rate", f"{stats.get('hit_rate', 0):.1%}")
+        
+        console.print(table)
+        
+    elif action == "clear":
+        # Clear cache with confirmation
+        if typer.confirm("Are you sure you want to clear the cache?"):
+            cache_mgr.clear()
+            console.print("[green]Cache cleared successfully[/green]")
+        else:
+            console.print("[yellow]Cache clear cancelled[/yellow]")
+            
+    elif action == "evict":
+        # Evict expired entries
+        count = cache_mgr.evict_expired()
+        console.print(f"[green]Evicted {count} expired entries[/green]")
+        
+    else:
+        console.print(f"[red]Unknown action: {action}[/red]")
+        console.print("Valid actions: stats, clear, evict")
+        raise typer.Exit(1)
 
 
 def main() -> None:

@@ -9,6 +9,7 @@ import trimesh
 from tqdm import tqdm
 
 from recodestl.core.exceptions import STLLoadError, STLValidationError
+from recodestl.utils import CacheManager
 
 
 class MeshLoader:
@@ -20,13 +21,15 @@ class MeshLoader:
     # Minimum file size for valid STL (header + at least one triangle)
     MIN_FILE_SIZE = 84 + 50
 
-    def __init__(self, show_progress: bool = True):
+    def __init__(self, show_progress: bool = True, cache_manager: Optional[CacheManager] = None):
         """Initialize mesh loader.
 
         Args:
             show_progress: Whether to show progress bars
+            cache_manager: Optional cache manager for storing loaded meshes
         """
         self.show_progress = show_progress
+        self.cache_manager = cache_manager
 
     def load(
         self,
@@ -52,6 +55,17 @@ class MeshLoader:
         
         # Basic file validation
         self._validate_file(file_path)
+        
+        # Check cache if available
+        if self.cache_manager:
+            cache_key = self.cache_manager.generate_key(
+                file_path,
+                params={"process": process, "validate": validate},
+                prefix="mesh"
+            )
+            cached_mesh = self.cache_manager.get_mesh(cache_key)
+            if cached_mesh is not None:
+                return cached_mesh
         
         try:
             # Determine file format
@@ -85,6 +99,10 @@ class MeshLoader:
             # Validate if requested
             if validate:
                 self.validate_mesh(mesh, file_path)
+            
+            # Cache the loaded mesh
+            if self.cache_manager and cache_key:
+                self.cache_manager.cache_mesh(cache_key, mesh)
                 
             return mesh
             
@@ -297,6 +315,7 @@ def load_stl(
     process: bool = True,
     validate: bool = True,
     show_progress: bool = True,
+    cache_manager: Optional[CacheManager] = None,
 ) -> trimesh.Trimesh:
     """Convenience function to load an STL file.
 
@@ -305,6 +324,7 @@ def load_stl(
         process: Whether to process mesh
         validate: Whether to validate mesh
         show_progress: Whether to show progress bar
+        cache_manager: Optional cache manager for caching loaded meshes
 
     Returns:
         Loaded trimesh object
@@ -313,5 +333,5 @@ def load_stl(
         STLLoadError: If file cannot be loaded
         STLValidationError: If validation fails
     """
-    loader = MeshLoader(show_progress=show_progress)
+    loader = MeshLoader(show_progress=show_progress, cache_manager=cache_manager)
     return loader.load(file_path, process=process, validate=validate)
