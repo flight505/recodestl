@@ -4,12 +4,12 @@ Convert STL files to parametric CAD models using the CAD-Recode neural model.
 
 ## Features
 
-- > **AI-Powered**: Uses CAD-Recode v1.5 (1.5B parameter model) to generate parametric CAD code
-- <¯ **Smart Sampling**: Multiple point cloud sampling strategies (adaptive, poisson, uniform)
-- =' **Feature Preservation**: Maintains mechanical features like threads, fillets, and chamfers
-- =€ **Apple Silicon Optimized**: Native support for M-series Macs with Metal Performance Shaders
-- =æ **Batch Processing**: Convert multiple files with parallel processing
-- =¾ **Caching**: Smart caching for faster repeated conversions
+- **AI-Powered**: Uses CAD-Recode v1.5 (1.5B parameter model) to generate parametric CAD code
+- **Smart Sampling**: Multiple point cloud sampling strategies (adaptive, poisson, uniform)
+- **Feature Preservation**: Maintains mechanical features like threads, fillets, and chamfers
+- **Apple Silicon Optimized**: Native support for M-series Macs with Metal Performance Shaders
+- **Batch Processing**: Convert multiple files with parallel processing
+- **Caching**: Smart caching for faster repeated conversions
 
 ## Installation
 

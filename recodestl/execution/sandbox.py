@@ -25,14 +25,13 @@ class SecurityValidator:
     FORBIDDEN_AST_NODES = {
         ast.Global,
         ast.Nonlocal,
-        ast.Exec,  # Python 2 compatibility
         ast.AsyncFunctionDef,
         ast.AsyncFor,
         ast.AsyncWith,
         ast.Yield,
         ast.YieldFrom,
         ast.GeneratorExp,  # Prevent generators
-        ast.ListComp,  # Allow list comprehensions
+        # ast.ListComp,  # Allow list comprehensions
     }
 
     # Forbidden function names
