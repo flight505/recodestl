@@ -1,13 +1,13 @@
 """Command-line interface for RecodeSTL."""
 
 from pathlib import Path
-from typing import Optional
+from typing import List, Optional
 
 import typer
 from rich.console import Console
 from rich.table import Table
 
-from recodestl.core import Config
+from recodestl.core import Config, Converter
 from recodestl.processing import load_stl, validate_stl, preprocess_mesh
 from recodestl.sampling import SamplingFactory
 from recodestl.utils import create_cache_manager
@@ -215,6 +215,129 @@ def sample(
     except Exception as e:
         console.print(f"[red]Error: {e}[/red]")
         raise typer.Exit(1)
+
+
+@app.command()
+def convert(
+    stl_files: List[Path] = typer.Argument(
+        ...,
+        exists=True,
+        help="STL files to convert",
+    ),
+    output_dir: Optional[Path] = typer.Option(
+        None,
+        "--output",
+        "-o",
+        help="Output directory for STEP files",
+    ),
+    method: str = typer.Option(
+        "adaptive",
+        "--method",
+        "-m",
+        help="Sampling method",
+    ),
+    num_points: int = typer.Option(
+        256,
+        "--points",
+        "-n",
+        help="Number of points to sample",
+    ),
+    config: Optional[Path] = typer.Option(
+        None,
+        "--config",
+        "-c",
+        help="Configuration file",
+    ),
+    parallel: bool = typer.Option(
+        False,
+        "--parallel",
+        "-p",
+        help="Process files in parallel",
+    ),
+    device: Optional[str] = typer.Option(
+        None,
+        "--device",
+        "-d",
+        help="Device to use (cpu, cuda, mps)",
+    ),
+    use_mock: bool = typer.Option(
+        False,
+        "--mock",
+        help="Use mock model for testing",
+    ),
+) -> None:
+    """Convert STL files to parametric STEP models."""
+    console.print(f"\n🚀 Converting {len(stl_files)} STL file(s)...")
+    
+    try:
+        # Load configuration
+        if config:
+            cfg = Config.from_toml(config)
+        else:
+            cfg = Config()
+            
+        # Override with command line options
+        cfg.sampling.method = method
+        cfg.sampling.num_points = num_points
+        if device:
+            cfg.model.device = device
+            
+        # Create output directory if specified
+        if output_dir:
+            output_dir.mkdir(parents=True, exist_ok=True)
+            
+        # Create converter
+        converter = Converter(config=cfg, console=console)
+        
+        # Use mock model if requested
+        if use_mock:
+            from recodestl.models.mock_model import MockCADRecodeModel
+            converter.model = MockCADRecodeModel(
+                device=cfg.model.device,
+                cache_manager=converter.cache_manager,
+            )
+            
+        # Load model
+        with console.status("Loading model..."):
+            converter.load_model()
+            
+        # Show device info
+        device_info = converter.get_device_info()
+        console.print(f"Using device: [cyan]{device_info['config']['device']}[/cyan]")
+        
+        # Convert files
+        results = converter.convert_batch(
+            stl_files,
+            output_dir=output_dir,
+            parallel=parallel,
+            progress_callback=lambda msg: console.print(f"  {msg}"),
+        )
+        
+        # Report results
+        successful = sum(1 for r in results if r.success)
+        failed = len(results) - successful
+        
+        console.print(f"\n✅ Successfully converted {successful}/{len(results)} files")
+        
+        if failed > 0:
+            console.print(f"❌ Failed to convert {failed} files:")
+            for result in results:
+                if not result.success:
+                    console.print(f"  • {result.input_path.name}: {result.error}")
+                    
+        # Show timing statistics
+        if successful > 0:
+            total_time = sum(r.metrics.get("total_time", 0) for r in results if r.success)
+            avg_time = total_time / successful
+            console.print(f"\n⏱️  Average conversion time: {avg_time:.2f}s per file")
+            
+    except Exception as e:
+        console.print(f"[red]Error: {e}[/red]")
+        raise typer.Exit(1)
+    finally:
+        # Cleanup
+        if 'converter' in locals():
+            converter.cleanup()
 
 
 @app.command()

@@ -12,12 +12,14 @@ from recodestl.core.config import (
     get_default_config,
     load_config,
 )
+from recodestl.core.converter import ConversionResult, Converter
 from recodestl.core.exceptions import (
     CacheError,
     CodeExecutionError,
     CodeGenerationError,
     CodeValidationError,
     ConfigurationError,
+    ConverterError,
     DeviceError,
     ExportError,
     InsufficientPointsError,
@@ -43,6 +45,9 @@ __all__ = [
     # Config functions
     "get_default_config",
     "load_config",
+    # Converter
+    "Converter",
+    "ConversionResult",
     # Exceptions
     "RecodeSTLError",
     "ConfigurationError",
@@ -59,4 +64,5 @@ __all__ = [
     "TimeoutError",
     "DeviceError",
     "MemoryError",
+    "ConverterError",
 ]

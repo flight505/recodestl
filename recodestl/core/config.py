@@ -111,6 +111,10 @@ class ProcessingConfig(BaseModel):
     memory_limit_gb: Optional[float] = Field(
         None, gt=0, description="Memory limit per process (GB)"
     )
+    validate_input: bool = Field(True, description="Validate input STL files")
+    repair_mesh: bool = Field(True, description="Attempt to repair invalid meshes")
+    simplify_mesh: bool = Field(False, description="Simplify high-resolution meshes")
+    simplify_target_faces: int = Field(10000, description="Target face count for simplification")
 
 
 class CacheConfig(BaseModel):

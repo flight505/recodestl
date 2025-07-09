@@ -126,3 +126,15 @@ class MemoryError(RecodeSTLError):
         )
         self.required = required
         self.available = available
+
+
+class ConverterError(RecodeSTLError):
+    """Raised when the conversion pipeline fails."""
+
+    def __init__(self, message: str, stage: Optional[str] = None):
+        """Initialize converter error with stage information."""
+        self.stage = stage
+        if stage:
+            super().__init__(f"Converter error at {stage}: {message}")
+        else:
+            super().__init__(f"Converter error: {message}")
