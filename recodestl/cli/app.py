@@ -10,7 +10,7 @@ from rich.table import Table
 from recodestl.core import Config, Converter
 from recodestl.processing import load_stl, validate_stl, preprocess_mesh
 from recodestl.sampling import SamplingFactory
-from recodestl.utils import create_cache_manager
+from recodestl.utils import create_cache_manager, setup_logging
 
 app = typer.Typer(
     name="recodestl",
@@ -18,6 +18,19 @@ app = typer.Typer(
     add_completion=False,
 )
 console = Console()
+
+# Set up structured logging based on config
+_logger_setup = False
+
+
+def _ensure_logging_setup(config: Optional[Config] = None) -> None:
+    """Ensure logging is set up once."""
+    global _logger_setup
+    if not _logger_setup:
+        if config is None:
+            config = Config()
+        setup_logging(config.logging)
+        _logger_setup = True
 
 
 @app.command()
@@ -170,6 +183,18 @@ def sample(
         "-p",
         help="Show preview of sampled points",
     ),
+    visualize: Optional[Path] = typer.Option(
+        None,
+        "--visualize",
+        "-v",
+        help="Save visualization to file",
+    ),
+    interactive: bool = typer.Option(
+        False,
+        "--interactive",
+        "-i",
+        help="Create interactive HTML visualization",
+    ),
 ) -> None:
     """Sample point cloud from STL file."""
     console.print(f"\n🎯 Sampling points from [cyan]{stl_file.name}[/cyan]...")
@@ -211,6 +236,32 @@ def sample(
                          f"{points.max(axis=0)[1]:.3f}, {points.max(axis=0)[2]:.3f}]")
             console.print(f"  • Mean: [{points.mean(axis=0)[0]:.3f}, "
                          f"{points.mean(axis=0)[1]:.3f}, {points.mean(axis=0)[2]:.3f}]")
+                         
+        # Visualize if requested
+        if visualize:
+            from recodestl.visualization import plot_point_cloud
+            
+            console.print(f"\n🎨 Creating visualization...")
+            
+            if interactive:
+                # Save as interactive HTML
+                viz_path = visualize.with_suffix(".html")
+                plot_point_cloud(
+                    points,
+                    title=f"{stl_file.stem} - {method} sampling ({num_points} points)",
+                    save_path=viz_path,
+                    interactive=True,
+                )
+                console.print(f"💾 Saved interactive visualization to [cyan]{viz_path}[/cyan]")
+            else:
+                # Save as static image
+                plot_point_cloud(
+                    points,
+                    title=f"{stl_file.stem} - {method} sampling ({num_points} points)",
+                    save_path=visualize,
+                    interactive=False,
+                )
+                console.print(f"💾 Saved visualization to [cyan]{visualize}[/cyan]")
                          
     except Exception as e:
         console.print(f"[red]Error: {e}[/red]")
@@ -265,6 +316,12 @@ def convert(
         "--mock",
         help="Use mock model for testing",
     ),
+    log_level: str = typer.Option(
+        "INFO",
+        "--log-level",
+        "-l",
+        help="Logging level (DEBUG, INFO, WARNING, ERROR)",
+    ),
 ) -> None:
     """Convert STL files to parametric STEP models."""
     console.print(f"\n🚀 Converting {len(stl_files)} STL file(s)...")
@@ -276,14 +333,44 @@ def convert(
         else:
             cfg = Config()
             
-        # Override with command line options
-        cfg.sampling.method = method
-        cfg.sampling.num_points = num_points
-        if device:
-            cfg.model.device = device
+        # Set up logging with specified level
+        from recodestl.core.config import LoggingConfig
+        log_config = cfg.logging.model_dump()
+        log_config["level"] = log_level.upper()
+        cfg = Config(
+            sampling=cfg.sampling,
+            model=cfg.model,
+            export=cfg.export,
+            cache=cfg.cache,
+            processing=cfg.processing,
+            logging=LoggingConfig(**log_config),
+            feature_detection=cfg.feature_detection,
+        )
+        _ensure_logging_setup(cfg)
             
-        # Create output directory if specified
-        if output_dir:
+        # Override with command line options by creating new config
+        from recodestl.core.config import SamplingConfig, ModelConfig
+        
+        sampling_kwargs = cfg.sampling.model_dump()
+        sampling_kwargs["method"] = method
+        sampling_kwargs["num_points"] = num_points
+        
+        model_kwargs = cfg.model.model_dump()
+        if device:
+            model_kwargs["device"] = device
+            
+        cfg = Config(
+            sampling=SamplingConfig(**sampling_kwargs),
+            model=ModelConfig(**model_kwargs),
+            export=cfg.export,
+            cache=cfg.cache,
+            processing=cfg.processing,
+            logging=cfg.logging,
+            feature_detection=cfg.feature_detection,
+        )
+            
+        # Create output directory if specified (and it's a directory)
+        if output_dir and not str(output_dir).endswith('.step'):
             output_dir.mkdir(parents=True, exist_ok=True)
             
         # Create converter
@@ -306,12 +393,21 @@ def convert(
         console.print(f"Using device: [cyan]{device_info['config']['device']}[/cyan]")
         
         # Convert files
-        results = converter.convert_batch(
-            stl_files,
-            output_dir=output_dir,
-            parallel=parallel,
-            progress_callback=lambda msg: console.print(f"  {msg}"),
-        )
+        if len(stl_files) == 1 and output_dir and str(output_dir).endswith('.step'):
+            # Single file with specific output path
+            results = [converter.convert_single(
+                stl_files[0],
+                output_path=output_dir,
+                progress_callback=lambda msg: console.print(f"  {msg}"),
+            )]
+        else:
+            # Batch conversion
+            results = converter.convert_batch(
+                stl_files,
+                output_dir=output_dir,
+                parallel=parallel,
+                progress_callback=lambda msg: console.print(f"  {msg}"),
+            )
         
         # Report results
         successful = sum(1 for r in results if r.success)
@@ -338,6 +434,117 @@ def convert(
         # Cleanup
         if 'converter' in locals():
             converter.cleanup()
+
+
+@app.command()
+def compare(
+    stl_file: Path = typer.Argument(
+        ...,
+        exists=True,
+        help="Path to STL file",
+    ),
+    num_points: int = typer.Option(
+        256,
+        "--points",
+        "-n",
+        help="Number of points to sample",
+    ),
+    output: Optional[Path] = typer.Option(
+        None,
+        "--output",
+        "-o",
+        help="Output file for comparison image",
+    ),
+    interactive: bool = typer.Option(
+        False,
+        "--interactive",
+        "-i",
+        help="Create interactive comparison",
+    ),
+) -> None:
+    """Compare different sampling methods on the same STL file."""
+    console.print(f"\n🔬 Comparing sampling methods for [cyan]{stl_file.name}[/cyan]...")
+    
+    try:
+        # Create cache manager if needed
+        cache_mgr = create_cache_manager() if Config().cache.enabled else None
+        
+        # Load mesh
+        with console.status("Loading STL file..."):
+            mesh = load_stl(stl_file, show_progress=True, cache_manager=cache_mgr)
+            
+        # Preprocess mesh
+        with console.status("Preprocessing mesh..."):
+            mesh, transform_info = preprocess_mesh(mesh)
+            
+        # Sample with each method
+        methods = ["uniform", "poisson", "adaptive"]
+        results = {}
+        
+        for method in methods:
+            with console.status(f"Sampling with {method} method..."):
+                sampler = SamplingFactory.create(method, num_points=num_points, cache_manager=cache_mgr)
+                points = sampler.sample(mesh)
+                results[method] = points
+                console.print(f"  ✅ {method}: {len(points)} points")
+                
+        # Create comparison visualization
+        if output or interactive:
+            from recodestl.visualization import compare_sampling_methods
+            
+            console.print(f"\n🎨 Creating comparison visualization...")
+            
+            if interactive and output:
+                # Save as interactive HTML if output path provided
+                output_path = output.with_suffix(".html")
+                # For now, we'll save individual interactive plots
+                from recodestl.visualization import plot_point_cloud
+                for method, points in results.items():
+                    method_path = output_path.parent / f"{output_path.stem}_{method}.html"
+                    plot_point_cloud(
+                        points,
+                        title=f"{stl_file.stem} - {method} sampling",
+                        save_path=method_path,
+                        interactive=True,
+                    )
+                console.print(f"💾 Saved interactive visualizations to [cyan]{output_path.parent}[/cyan]")
+            else:
+                # Create static comparison image
+                fig = compare_sampling_methods(
+                    results,
+                    output_path=output,
+                    title=f"Sampling Comparison - {stl_file.stem} ({num_points} points)",
+                )
+                if output:
+                    console.print(f"💾 Saved comparison to [cyan]{output}[/cyan]")
+                else:
+                    # Show the figure if no output specified
+                    import matplotlib.pyplot as plt
+                    plt.show()
+                    
+        # Show statistics
+        console.print("\n📊 Sampling Statistics:")
+        table = Table(show_header=True, header_style="bold magenta")
+        table.add_column("Method", style="cyan", no_wrap=True)
+        table.add_column("Points", justify="right")
+        table.add_column("Min Z", justify="right")
+        table.add_column("Max Z", justify="right")
+        table.add_column("Std Dev", justify="right")
+        
+        for method, points in results.items():
+            table.add_row(
+                method,
+                str(len(points)),
+                f"{points[:, 2].min():.3f}",
+                f"{points[:, 2].max():.3f}",
+                f"{points.std():.3f}",
+            )
+            
+        console.print(table)
+        
+    except Exception as e:
+        console.print(f"[red]Error: {e}[/red]")
+        raise typer.Exit(1)
 
 
 @app.command()

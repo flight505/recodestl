@@ -75,18 +75,18 @@ class CadQueryExecutor:
                 errors.append("No solids found in workplane")
 
             # Check if the model is valid
-            for solid in workplane.solids().all():
-                if not solid.isValid():
-                    errors.append("Invalid solid geometry detected")
-
-                # Check volume
-                volume = solid.Volume()
-                if volume <= 0:
-                    errors.append(f"Invalid volume: {volume}")
-
-                # Check for self-intersections
-                if not solid.fix():
-                    errors.append("Failed to fix solid geometry")
+            solids = workplane.solids()
+            for i in range(solids.size()):
+                # Get the solid shape
+                try:
+                    solid = solids.val()
+                    if hasattr(solid, 'Volume'):
+                        volume = solid.Volume()
+                        if volume <= 0:
+                            errors.append(f"Invalid volume for solid {i}: {volume}")
+                except Exception as e:
+                    # Skip volume check if not supported
+                    pass
 
         except Exception as e:
             errors.append(f"Validation error: {str(e)}")

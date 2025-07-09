@@ -1,6 +1,5 @@
 """Main converter pipeline for STL to parametric CAD conversion."""
 
-import logging
 import time
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple, Union
@@ -22,9 +21,15 @@ from recodestl.execution import CadQueryExecutor, SecureExecutor
 from recodestl.models import CADRecodeModel, create_model
 from recodestl.processing import load_stl, preprocess_mesh, validate_stl
 from recodestl.sampling import SamplingFactory
-from recodestl.utils import CacheManager, create_cache_manager
+from recodestl.utils import (
+    CacheManager,
+    create_cache_manager,
+    get_logger,
+    log_conversion_result,
+    StructuredLogger,
+)
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 class ConversionResult:
@@ -81,12 +86,8 @@ class Converter:
         self.console = console or Console()
         
         # Create executors
-        self.secure_executor = SecureExecutor(
-            timeout=self.config.processing.timeout,
-        )
         self.cadquery_executor = CadQueryExecutor(
-            secure_executor=self.secure_executor,
-            cache_manager=self.cache_manager,
+            timeout=self.config.processing.timeout,
         )
         
         self._model_loaded = False
@@ -115,7 +116,7 @@ class Converter:
             
             self.model.load_model(cache_dir=model_path)
             self._model_loaded = True
-            logger.info("Model loaded successfully")
+            logger.info("model_loaded", device=self.config.model.device)
             
         except Exception as e:
             raise ModelError(f"Failed to load model: {str(e)}")
@@ -140,130 +141,155 @@ class Converter:
         start_time = time.time()
         metrics = {}
         
-        try:
-            # Validate input
-            if not stl_path.exists():
-                raise STLLoadError(stl_path, "File does not exist")
+        with StructuredLogger(
+            logger,
+            "convert_single",
+            input_file=str(stl_path),
+            output_file=str(output_path) if output_path else None,
+        ) as log_ctx:
+            try:
+                # Validate input
+                if not stl_path.exists():
+                    raise STLLoadError(stl_path, "File does not exist")
                 
-            # Auto-generate output path if needed
-            if output_path is None:
-                output_path = stl_path.with_suffix(".step")
-            else:
-                output_path = Path(output_path)
+                # Auto-generate output path if needed
+                if output_path is None:
+                    output_path = stl_path.with_suffix(".step")
+                else:
+                    output_path = Path(output_path)
+                    
+                # Ensure output directory exists
+                output_path.parent.mkdir(parents=True, exist_ok=True)
                 
-            # Ensure output directory exists
-            output_path.parent.mkdir(parents=True, exist_ok=True)
-            
-            # 1. Load and validate mesh
-            if progress_callback:
-                progress_callback("Loading STL file...")
-                
-            mesh = load_stl(
+                # 1. Load and validate mesh
+                if progress_callback:
+                    progress_callback("Loading STL file...")
+                    
+                mesh = load_stl(
                 stl_path,
                 validate=self.config.processing.validate_input,
                 show_progress=False,
                 cache_manager=self.cache_manager,
-            )
-            metrics["mesh_load_time"] = time.time() - start_time
-            metrics["vertex_count"] = len(mesh.vertices)
-            metrics["face_count"] = len(mesh.faces)
-            
-            # 2. Preprocess mesh
-            if progress_callback:
-                progress_callback("Preprocessing mesh...")
+                )
+                metrics["mesh_load_time"] = time.time() - start_time
+                metrics["vertex_count"] = len(mesh.vertices)
+                metrics["face_count"] = len(mesh.faces)
+                log_ctx.update_context(vertex_count=metrics["vertex_count"], face_count=metrics["face_count"])
                 
-            mesh, transform_info = preprocess_mesh(
+                # 2. Preprocess mesh
+                if progress_callback:
+                    progress_callback("Preprocessing mesh...")
+                    
+                mesh, transform_info = preprocess_mesh(
                 mesh,
-                repair=self.config.processing.repair_mesh,
-                simplify=self.config.processing.simplify_mesh,
-                target_faces=self.config.processing.simplify_target_faces,
-            )
-            metrics["preprocess_time"] = time.time() - start_time - metrics["mesh_load_time"]
-            
-            # 3. Generate point cloud
-            if progress_callback:
-                progress_callback(f"Sampling {self.config.sampling.num_points} points...")
+                target_scale=2.0,
+                center=True,
+                fix_normals=True,
+                remove_degenerate=True,
+                )
+                metrics["preprocess_time"] = time.time() - start_time - metrics["mesh_load_time"]
                 
-            sampler = SamplingFactory.create(
+                # 3. Generate point cloud
+                if progress_callback:
+                    progress_callback(f"Sampling {self.config.sampling.num_points} points...")
+                    
+                # Create sampler with appropriate parameters
+                sampler_kwargs = {
+                "num_points": self.config.sampling.num_points,
+                "cache_manager": self.cache_manager,
+                }
+                
+                # Add method-specific parameters
+                if self.config.sampling.method == "adaptive":
+                    sampler_kwargs.update({
+                        "curvature_weight": self.config.sampling.curvature_weight,
+                        "feature_radius": self.config.sampling.curvature_radius,
+                    })
+                
+                sampler = SamplingFactory.create(
                 self.config.sampling.method,
-                num_points=self.config.sampling.num_points,
-                cache_manager=self.cache_manager,
-                **self.config.sampling.method_params,
-            )
-            
-            point_cloud = sampler.sample(mesh)
-            metrics["sampling_time"] = (
-                time.time() - start_time - metrics["mesh_load_time"] - metrics["preprocess_time"]
-            )
-            
-            # 4. Run model inference
-            if progress_callback:
-                progress_callback("Generating CAD code...")
+                **sampler_kwargs,
+                )
                 
-            if not self._model_loaded:
-                self.load_model()
+                point_cloud = sampler.sample(mesh)
+                metrics["sampling_time"] = (
+                    time.time() - start_time - metrics["mesh_load_time"] - metrics["preprocess_time"]
+                )
                 
-            cad_code = self.model.generate(
+                # 4. Run model inference
+                if progress_callback:
+                    progress_callback("Generating CAD code...")
+                    
+                if not self._model_loaded:
+                    self.load_model()
+                    
+                cad_code = self.model.generate(
                 point_cloud,
                 max_new_tokens=self.config.model.max_tokens,
                 temperature=self.config.model.temperature,
                 do_sample=self.config.model.temperature > 0,
-            )
-            metrics["inference_time"] = (
-                time.time()
-                - start_time
-                - metrics["mesh_load_time"]
-                - metrics["preprocess_time"]
-                - metrics["sampling_time"]
-            )
-            
-            # 5. Execute code and export
-            if progress_callback:
-                progress_callback("Executing CAD code and exporting...")
+                )
+                metrics["inference_time"] = (
+                    time.time()
+                    - start_time
+                    - metrics["mesh_load_time"]
+                    - metrics["preprocess_time"]
+                    - metrics["sampling_time"]
+                )
                 
-            step_file = self.cadquery_executor.execute_and_export(
+                # 5. Execute code and export
+                if progress_callback:
+                    progress_callback("Executing CAD code and exporting...")
+                    
+                self.cadquery_executor.execute_and_export(
                 cad_code,
                 output_path,
-                file_format=self.config.export.file_format,
-                precision=self.config.export.precision,
-                assembly_mode=self.config.export.assembly_mode,
-            )
-            
-            metrics["export_time"] = (
-                time.time()
-                - start_time
-                - metrics["mesh_load_time"]
-                - metrics["preprocess_time"]
-                - metrics["sampling_time"]
-                - metrics["inference_time"]
-            )
-            metrics["total_time"] = time.time() - start_time
-            metrics["output_size"] = step_file.stat().st_size
-            
-            # Log success
-            logger.info(
-                f"Successfully converted {stl_path.name} to {output_path.name} "
-                f"in {metrics['total_time']:.2f}s"
-            )
-            
-            return ConversionResult(
-                success=True,
-                input_path=stl_path,
-                output_path=output_path,
-                metrics=metrics,
-            )
-            
-        except Exception as e:
-            # Log error
-            error_msg = f"Failed to convert {stl_path.name}: {str(e)}"
-            logger.error(error_msg)
-            
-            return ConversionResult(
-                success=False,
-                input_path=stl_path,
-                error=error_msg,
-                metrics=metrics,
-            )
+                export_format="step",
+                precision=self.config.export.step_precision,
+                angular_tolerance=self.config.export.angular_tolerance,
+                validate=self.config.export.validate_output,
+                )
+                step_file = output_path
+                
+                metrics["export_time"] = (
+                    time.time()
+                    - start_time
+                    - metrics["mesh_load_time"]
+                    - metrics["preprocess_time"]
+                    - metrics["sampling_time"]
+                    - metrics["inference_time"]
+                )
+                metrics["total_time"] = time.time() - start_time
+                metrics["output_size"] = step_file.stat().st_size
+                
+                result = ConversionResult(
+                    success=True,
+                    input_path=stl_path,
+                    output_path=output_path,
+                    metrics=metrics,
+                )
+                
+                # Log conversion result
+                log_conversion_result(logger, result)
+                
+                return result
+                
+            except Exception as e:
+                # Create error result
+                error_msg = f"Failed to convert {stl_path.name}: {str(e)}"
+                metrics["total_time"] = time.time() - start_time
+                
+                result = ConversionResult(
+                    success=False,
+                    input_path=stl_path,
+                    error=error_msg,
+                    metrics=metrics,
+                )
+                
+                # Log error result
+                log_conversion_result(logger, result)
+                
+                return result
 
     def convert_batch(
         self,

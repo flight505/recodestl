@@ -138,11 +138,14 @@ class LoggingConfig(BaseModel):
     level: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = Field(
         "INFO", description="Logging level"
     )
-    format: Literal["json", "console"] = Field(
+    format: Literal["json", "console", "plain"] = Field(
         "console", description="Log format"
     )
     log_dir: Optional[Path] = Field(None, description="Directory for log files")
     log_to_file: bool = Field(False, description="Enable file logging")
+    timestamp_format: str = Field("iso", description="Timestamp format")
+    colorize: bool = Field(True, description="Colorize console output")
+    add_caller_info: bool = Field(False, description="Include caller information")
 
 
 class Config(BaseModel):
