@@ -1,0 +1,78 @@
+# RecodeSTL Configuration Example
+# Copy this file to config.toml and customize as needed
+
+[model]
+# Device to use for inference: "cpu", "cuda", or "mps"
+device = "mps"  # Optimized for Apple Silicon
+max_tokens = 768
+temperature = 0.0  # 0 = deterministic generation
+use_flash_attention = false  # Not supported on MPS
+model_name = "filapro/cad-recode-v1.5"
+tokenizer_name = "Qwen/Qwen2-1.5B"
+dtype = "auto"  # auto, float32, float16, bfloat16
+
+[sampling]
+# Number of points to sample from the mesh
+num_points = 256
+# Sampling method: "uniform", "poisson", or "adaptive"
+method = "adaptive"
+# Initial samples before filtering
+pre_samples = 8192
+# Radius for curvature computation
+curvature_radius = 0.1
+# Multiplier for feature-rich areas
+feature_multiplier = 5
+# Weight for high-curvature areas (0-1)
+curvature_weight = 0.7
+
+[export]
+# Precision for STEP file export
+step_precision = 0.001
+# Angular tolerance in degrees
+angular_tolerance = 0.1
+# Validate generated STEP files
+validate_output = true
+
+[feature_detection]
+# Angle threshold for edge detection (degrees)
+edge_angle_threshold = 4.0
+# Angle defect threshold (degrees)
+angle_defect_threshold = 3.0
+# Minimum hole diameter to detect (mm)
+min_hole_diameter = 2.0
+# Enable specific feature detection
+fillet_detection = true
+chamfer_detection = true
+thread_detection = true
+
+[processing]
+# Enable parallel processing for batch operations
+parallel_enabled = true
+# Batch size for parallel processing
+batch_size = 4
+# Timeout for code execution (seconds)
+timeout = 60
+# Max workers for parallel processing (null = auto)
+# max_workers = 4
+# Memory limit per process (GB)
+# memory_limit_gb = 8.0
+
+[cache]
+# Enable caching for faster repeated conversions
+enabled = true
+# Cache directory (default: ~/.cache/recodestl)
+# cache_dir = "/path/to/cache"
+# Maximum cache size in GB
+max_size_gb = 20.0
+# Cache time-to-live in days
+ttl_days = 30
+
+[logging]
+# Logging level: "DEBUG", "INFO", "WARNING", "ERROR"
+level = "INFO"
+# Log format: "json" or "console"
+format = "console"
+# Enable file logging
+log_to_file = false
+# Directory for log files
+# log_dir = "/path/to/logs"
